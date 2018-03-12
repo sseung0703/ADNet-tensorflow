@@ -58,10 +58,12 @@ def gen_samples(noise, bb, n, params, tans_f, scale_f):
     
     if noise == 'gaussian':
         samples[:,:2] += tans_f * round(np.mean(bb[2:])) * np.maximum(-1,np.minimum(1,0.5*np.random.randn(n,2)))
-        samples[:,2:] *= params['scale_factor']**(scale_f*np.maximum(-1,np.minimum(1,0.5*np.random.randn(n,2))))
+        ns = np.random.randn(n,1)
+        samples[:,2:] *= params['scale_factor']**(scale_f*np.maximum(-1,np.minimum(1,0.5*np.hstack((ns,ns)))))
     elif noise == 'uniform':
         samples[:,:2] += tans_f * round(np.mean(bb[2:])) * (np.random.randn(n,2)*2-1)
-        samples[:,2:] *= params['scale_factor']**(scale_f*np.random.randn(n,2)*2-1)
+        ns = np.random.randn(n,1)
+        samples[:,2:] *= params['scale_factor']**(scale_f*np.hstack((ns,ns))*2-1)
     elif noise == 'whole':
         ran = np.round([bb[2]/2, bb[3]/2, w-bb[2]/2, h-bb[3]/2]).astype(int)
         stride = np.round([bb[2]/5, bb[3]/5]).astype(int)
@@ -84,8 +86,8 @@ def gen_samples(noise, bb, n, params, tans_f, scale_f):
     
     samples[:,0] -= samples[:,2]/2
     samples[:,1] -= samples[:,3]/2
-    samples[:,0] = np.maximum(1-samples[:,2]/2,np.minimum(w-samples[:,2], samples[:,0]))
-    samples[:,1] = np.maximum(1-samples[:,3]/2,np.minimum(w-samples[:,3], samples[:,1]))
+    samples[:,0] = np.maximum(1-samples[:,2]/2,np.minimum(w-samples[:,2]/2, samples[:,0]))
+    samples[:,1] = np.maximum(1-samples[:,3]/2,np.minimum(w-samples[:,3]/2, samples[:,1]))
     samples = np.round(samples).astype(np.float32)
     return samples
 

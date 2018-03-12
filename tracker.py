@@ -20,12 +20,12 @@ param_path = '/home/dmsl/Documents/Adnet-tf'
 dataset = glob.glob(os.path.join('%s'%data_home,'*'))
 dataset.sort()
 
-results = {}
-results['fps'] = []
-results['location'] = []
-results['overlap'] = []
+#results = {}
+#results['fps'] = []
+#results['location'] = []
+#results['overlap'] = []
 for v, vd in enumerate(dataset):
-#    vd = dataset[v+2]
+#    vd = dataset[v+52]
     with tf.Graph().as_default():
     #%% get convolutional feature
         cropped_img = tf.placeholder_with_default(tf.cast(np.zeros([1,112,112,3]),tf.float32), [None, 112,112,3])
