@@ -15,7 +15,7 @@ import cv2, glob, os, re
 
 import tracker_util as tutil
 params = tutil.get_params()
-data_home = '/home/dmsl/Documents/data/OTB100/'
+data_home = '/home/dmsl/Documents/Adnet-tf/OTB100/'
 param_path = '/home/dmsl/Documents/Adnet-tf'
 dataset = glob.glob(os.path.join('%s'%data_home,'*'))
 dataset.sort()
