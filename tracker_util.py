@@ -3,17 +3,16 @@ slim = tf.contrib.slim
 
 import numpy as np
 import scipy.io as sio
-
 def get_params():
     params = {}
     
-    params['iter_init'] = 300
-    params['iter_on'] = 30
+    params['iter_init'] = 20
+    params['iter_on'] = 10
     params['iterval'] = 30
-    params['init_learning_rate'] = 3e-3
-    params['on_learning_rate'] =1e-3
+    params['init_learning_rate'] = 3e-4
+    params['on_learning_rate'] =1e-4
     params['batch_size'] = 64
-    
+    params['data_per_label'] = [6]*8+[4]+[6]*2
     params['redet_samples'] = 64
     
     params['pos_init'] = 200
@@ -57,13 +56,12 @@ def gen_samples(noise, bb, n, params, tans_f, scale_f):
     samples = np.array(sample*n)
     
     if noise == 'gaussian':
-        samples[:,:2] += tans_f * round(np.mean(bb[2:])) * np.maximum(-1,np.minimum(1,0.5*np.random.randn(n,2)))
-        ns = np.random.randn(n,1)
-        samples[:,2:] *= params['scale_factor']**(scale_f*np.maximum(-1,np.minimum(1,0.5*np.hstack((ns,ns)))))
+        samples[:,:2] += tans_f * round(np.mean(bb[2:])) * np.maximum(-1,np.minimum(1,0.5*np.random.randn(n,2)))                                                                  
+        samples[:,2:] *= np.hstack(tuple([params['scale_factor']**(scale_f*np.maximum(-1,np.minimum(1,0.5*np.random.randn(n,1))))]))
+        
     elif noise == 'uniform':
         samples[:,:2] += tans_f * round(np.mean(bb[2:])) * (np.random.randn(n,2)*2-1)
-        ns = np.random.randn(n,1)
-        samples[:,2:] *= params['scale_factor']**(scale_f*np.hstack((ns,ns))*2-1)
+        samples[:,2:] *= np.hstack(tuple([params['scale_factor']**(scale_f*np.random.randn(n,1)*2-1)]*2))
     elif noise == 'whole':
         ran = np.round([bb[2]/2, bb[3]/2, w-bb[2]/2, h-bb[3]/2]).astype(int)
         stride = np.round([bb[2]/5, bb[3]/5]).astype(int)
@@ -76,7 +74,6 @@ def gen_samples(noise, bb, n, params, tans_f, scale_f):
                    bb[2]*params['scale_factor']**ds.reshape(-1),
                    bb[3]*params['scale_factor']**ds.reshape(-1))).T
         
-#        samples = windows[np.random.choice(windows.shape[0],min(n, windows.shape[0]),replace=False)]
         samples = np.zeros((0,4));
         while (samples.shape[0]<n):
             samples = np.vstack((samples,windows[np.random.choice(windows.shape[0],min(windows.shape[0],n-samples.shape[0]),replace=False)]))
@@ -87,7 +84,7 @@ def gen_samples(noise, bb, n, params, tans_f, scale_f):
     samples[:,0] -= samples[:,2]/2
     samples[:,1] -= samples[:,3]/2
     samples[:,0] = np.maximum(1-samples[:,2]/2,np.minimum(w-samples[:,2]/2, samples[:,0]))
-    samples[:,1] = np.maximum(1-samples[:,3]/2,np.minimum(w-samples[:,3]/2, samples[:,1]))
+    samples[:,1] = np.maximum(1-samples[:,3]/2,np.minimum(h-samples[:,3]/2, samples[:,1]))
     samples = np.round(samples).astype(np.float32)
     return samples
 
@@ -134,48 +131,46 @@ def gen_action_labels(params, samples, bb):
     action[tuple(range(num)), tuple(max_action)] = 1
     
     return action
-def model_conv(image,path):
-    vggm = sio.loadmat('%s/ADNet_params.mat'%path)['params'][0][0]
-    with tf.variable_scope('Adnet'):
-        conv = slim.conv2d(image, 96, [7, 7], 2, padding = 'VALID', activation_fn=tf.nn.relu,
-                           weights_initializer = tf.constant_initializer(vggm[0]),
-                           biases_initializer  = tf.constant_initializer(vggm[1]),
-                           scope='conv0', trainable=False)
-        conv = tf.nn.lrn(conv,2,2,1e-4,0.75)
-        conv = slim.max_pool2d(conv, [3, 3], 2, scope='pool0')
+def model_conv(image, path):
+    vggm = sio.loadmat(path)
+    with slim.arg_scope([slim.conv2d, slim.fully_connected],
+                        weights_initializer=tf.contrib.layers.variance_scaling_initializer(),
+                        biases_initializer=tf.zeros_initializer(),
+                        weights_regularizer=slim.l2_regularizer(5e-4)):
         
-        conv = slim.conv2d(conv, 256, [5, 5], 2, padding = 'VALID', activation_fn=tf.nn.relu,
-                           weights_initializer = tf.constant_initializer(vggm[2]),
-                           biases_initializer  = tf.constant_initializer(vggm[3]),
-                           scope='conv1', trainable=False)
-        conv = tf.nn.lrn(conv,2,2,1e-4,0.75)
-        conv = slim.max_pool2d(conv, [3, 3], 2, scope='pool1')
-        
-        conv = slim.conv2d(conv, 512, [3, 3], 1, padding = 'VALID', activation_fn=tf.nn.relu,
-                           weights_initializer = tf.constant_initializer(vggm[4]),
-                           biases_initializer  = tf.constant_initializer(vggm[5]),
-                           scope='conv2', trainable=False)
-    return conv
+        with tf.variable_scope('Adnet'):
+            std0 = slim.conv2d(image, 96, [9, 9], 4, padding = 'VALID', activation_fn=tf.nn.relu,
+                               weights_initializer = tf.constant_initializer(vggm['conv1w']),
+                               biases_initializer  = tf.constant_initializer(vggm['conv1b']),
+                               scope='conv0', trainable=True)
+            std0 = tf.nn.lrn(std0,2,2,1e-4,0.75)
+            std1 = slim.conv2d(std0, 256, [7, 7], 3, padding = 'VALID', activation_fn=tf.nn.relu,
+                               weights_initializer = tf.constant_initializer(vggm['conv2w']),
+                               biases_initializer  = tf.constant_initializer(vggm['conv2b']),
+                               scope='conv1', trainable=True)
+            std1 = tf.nn.lrn(std1,2,2,1e-4,0.75)
+            std2 = slim.conv2d(std1, 512, [5, 5], 1, padding = 'VALID', activation_fn=tf.nn.relu,
+                               weights_initializer = tf.constant_initializer(vggm['conv3w']),
+                               biases_initializer  = tf.constant_initializer(vggm['conv3b']),
+                               scope='conv2', trainable=True)
+                
+    return std2
 
 def model_fc(conv, action_hist, is_training, path):
     with slim.arg_scope([slim.conv2d, slim.fully_connected],
                         weights_regularizer=slim.l2_regularizer(5e-4),
-                        biases_regularizer=slim.l2_regularizer(5e-4)):
+                        biases_regularizer=slim.l2_regularizer(5e-4),):
         with tf.variable_scope('Adnet'):
-            vggm = sio.loadmat('%s/ADNet_params.mat'%path)['params'][0][0]
             fc = slim.conv2d(conv, 512, [3,3], padding='VALID', activation_fn=tf.nn.relu,
-                             weights_initializer = tf.constant_initializer(vggm[6]),
-                             biases_initializer  = tf.constant_initializer(vggm[7]),
                              trainable=True, scope = 'full0')
+            fc = tf.cond(is_training, lambda : slim.dropout(fc, 0.5),
+                                      lambda : fc)
             fc = slim.conv2d(fc, 512, [1,1], padding='VALID', activation_fn=None,
-                             weights_initializer = tf.constant_initializer(vggm[8][:,:,:512]),
-                             biases_initializer = tf.constant_initializer(vggm[9]),
                              trainable=True, scope = 'full1')
             def add_hist(fc, action_hist):
                 action_hist = tf.reshape(action_hist,[-1,1,1,110])
                 fc += slim.conv2d(action_hist, 512, [1,1], activation_fn=None, 
-                                  weights_initializer = tf.constant_initializer(vggm[8][:,:,512:]),
-                                  biases_initializer  = tf.zeros_initializer(),
+                                  biases_initializer  = None,
                                   trainable=False, scope = 'fc_act')
                 
                 return tf.nn.relu(fc)
@@ -184,16 +179,14 @@ def model_fc(conv, action_hist, is_training, path):
                 #do nothing
                 return tf.nn.relu(fc)
             
-            fc = add_hist(fc, action_hist)
-            
+            fc = tf.cond(is_training, lambda : no_add_hist(fc),
+                                      lambda : add_hist(fc, action_hist))
+            fc = tf.cond(is_training, lambda : slim.dropout(fc, 0.5),
+                                      lambda : fc)
             fc2 = slim.flatten(fc)
             act = slim.fully_connected(fc2, 11, activation_fn=None, 
-                                       weights_initializer = tf.constant_initializer(vggm[10]),
-                                       biases_initializer  = tf.constant_initializer(vggm[11]),
                                        trainable=True, scope = 'full_act')
             conf = slim.fully_connected(fc2, 2, activation_fn=None, 
-                                        weights_initializer = tf.constant_initializer(vggm[12]),
-                                        biases_initializer  = tf.constant_initializer(vggm[13]),
                                         trainable=True, scope = 'full_conf')
 #            
         return act, conf, fc2
@@ -216,72 +209,171 @@ def refine_box(boxes, params):
 def get_conv_feature(sess, end_points, feed_dict):
     conv_feat = sess.run(end_points, feed_dict = feed_dict)
     return conv_feat
-    
-def train_fc(sess, end_points, iteration, conv, act_label, sco_label, is_training,
-             act, learning_rate, params, feat_conv, pos_action_labels, lr):
+
+def train_fc(sess, nodes, feat_conv, pos_action_labels,
+             iteration, params, lr):
     num_data = feat_conv.shape[0]
     num_neg  = num_data-pos_action_labels.shape[0]
     num_pos  = num_data-num_neg
     
-    pos_data = feat_conv[:num_pos]
+    pos_feat_conv = feat_conv[:num_pos]
+    neg_feat_conv = feat_conv[num_pos:]
     
-    neg_action_labels = np.vstack((pos_action_labels,
-                                   np.zeros([num_neg,params['num_actions']])))
-    pos_conf_label = np.array([[0,1]]*num_pos)
-    conf_label = np.array([[0,1]]*num_pos+[[1,0]]*num_neg)
+    randpos = np.random.choice(num_pos,num_pos,replace=False)
+    randneg = np.random.choice(num_neg,num_neg,replace=False)
     
-    pos_seed = []
-    neg_seed = []
-    for i in range(iteration):
-        if len(pos_seed) == 0:
-            pos_seed = np.random.choice(num_pos,num_pos,replace=False)
-        p_s = pos_seed[:min(params['batch_size'],pos_seed.shape[0])]
-        pos_seed = pos_seed[params['batch_size']:]
+    train_action_cnt = 0
+    train_action = []
+    remain = params['batch_size']*iteration
+    while remain > 0:
+        if (train_action_cnt == 0):
+            train_action_list = randpos
         
-        feat_conv_samples = pos_data[p_s]
-        action_label_samples = pos_action_labels[p_s]
-        conf_label_samples = pos_conf_label[p_s]
-        sess.run(end_points[0], feed_dict = {conv : feat_conv_samples,
-                                                    act_label : action_label_samples,
-                                                    sco_label : conf_label_samples,
-                                                    is_training : 1.0,
-                                                    act : 1.0,
-                                                    learning_rate : lr})
+        train_action += list(train_action_list[train_action_cnt:min(len(train_action_list),train_action_cnt+remain)])
+        train_action_cnt = min(len(train_action_list), train_action_cnt+remain)
+        train_action_cnt = train_action_cnt%len(train_action_list)
+        remain = params['batch_size']*iteration-len(train_action)
+    
+    train_neg_cnt = 0
+    train_neg = []
+    remain = 4*params['batch_size']*iteration
+    while remain > 0:
+        if train_neg_cnt == 0:
+            train_hard_list = randneg
+
+        train_neg += list(train_hard_list[train_neg_cnt:min(len(train_hard_list),train_neg_cnt+remain)])
+        
+        train_neg_cnt = min(len(train_hard_list),train_neg_cnt+remain)
+        train_neg_cnt = train_neg_cnt%len(train_hard_list)
+        remain = 4*params['batch_size']*iteration-len(train_neg)
+    train_neg = np.array(train_neg)
+    action_label_indices = []
+    for i in range(11):
+        action_label_indices.append(np.where(np.argmax(pos_action_labels,1)==i)[0])
+        if len(action_label_indices[i]) == 0:
+            action_label_indices[i] = np.random.choice(num_pos,num_pos, replace = False)
+    
+    train_actions = []
+    for i in range(11):
+        train_action_cnt = 0
+        train_action = []
+        
+        remain = params['data_per_label'][i]*iteration
+        action_label_index = action_label_indices[i]
+        
+        dpl = params['data_per_label'][i]
+        ali = list(action_label_index)
+        randpos = np.random.choice(ali,dpl)
+        
+        if np.size(randpos) == 0:
+            randpos = np.random.choice(num_pos,num_pos, replace = False)
+        
+        while remain > 0:
+            if(train_action_cnt==0):
+                train_action_list = randpos
+                
+            train_action += list(train_action_list[train_action_cnt:min(len(train_action_list),train_action_cnt+remain)])
+            train_action_cnt = min(len(train_action_list), train_action_cnt+remain)
+            train_action_cnt = train_action_cnt%len(train_action_list)
+            remain =params['data_per_label'][i]*iteration-len(train_action)
+        train_actions.append(train_action)
+    
+    for i in range(iteration):
+        pos_examples = []
+        for a in range(11):
+            train_action = train_actions[a]
+            pos_examples += train_action[i*params['data_per_label'][a]: (i+1)*params['data_per_label'][a]]
+            
+        pos_feat = pos_feat_conv[pos_examples]
+        action_labels = pos_action_labels[pos_examples]
+        
+        sess.run(nodes['act_train_op'],
+                 feed_dict = {nodes['conv'] : pos_feat,
+                              nodes['act_label'] : action_labels,
+                              nodes['sco_label'] : np.zeros([action_labels.shape[0], 2]),
+                              nodes['is_training'] : 1.0,
+                              nodes['act'] : 1.0,
+                              nodes['learning_rate'] : lr})
         
         batch_sco = []
-        batch_idx = []
+        hard_start = i*4*params['batch_size']
         for b in range(4):
-            if len(neg_seed) == 0:
-                neg_seed = np.random.choice(num_data,num_data,replace=False)
-            n_s = neg_seed[:min(params['batch_size']//2,neg_seed.shape[0])]
-            neg_seed = neg_seed[params['batch_size']//2:]
+            b_st = b*params['batch_size']
+            curr_batch = train_neg[hard_start+b_st:hard_start+b_st+params['batch_size']]
+            curr_feat = neg_feat_conv[curr_batch]
             
-            feat_conv_samples = feat_conv[n_s]
-            action_label_samples = neg_action_labels[n_s]
-            conf_label_samples = conf_label[n_s]
-            
-            pred_score = sess.run(end_points[2],
-                                  feed_dict = {conv : feat_conv_samples,
-                                               is_training : 0.0})
+            pred_score = sess.run(nodes['soft_conf'],
+                                  feed_dict = {nodes['conv'] : curr_feat,
+                                               nodes['is_training'] : 0.0})
             batch_sco.append(pred_score)
-            batch_idx.append(neg_seed)
             
         batch_sco = np.vstack(batch_sco)
-        batch_idx = np.hstack(batch_idx)
         
-        idx = np.lexsort((np.array(range(len(batch_sco))),batch_sco[:,1]))
-        idx = batch_idx[idx[-params['batch_size']:]]
+        idx = np.flip(np.lexsort((np.array(range(len(batch_sco))),batch_sco[:,1])),0)+hard_start
+        hard_score_examples = train_neg[idx[:params['batch_size']]]
+        feat_conv_samples = np.vstack((pos_feat,neg_feat_conv[hard_score_examples]))
+        conf_label_samples = np.array([[0,1]]*params['batch_size']+[[1,0]]*params['batch_size'])
         
-        feat_conv_samples = feat_conv[idx]
-        action_label_samples = neg_action_labels[idx]
-        conf_label_samples = conf_label[idx]
-        sess.run(end_points[1], feed_dict = {conv : feat_conv_samples,
-                                             act_label : action_label_samples,
-                                             sco_label : conf_label_samples,
-                                             is_training : 1.0,
-                                             act : 0.0,
-                                             learning_rate : lr})
+        sess.run(nodes['act_train_op'],
+                 feed_dict = {nodes['conv'] : feat_conv_samples,
+                              nodes['act_label'] : np.zeros([conf_label_samples.shape[0], 11]),
+                              nodes['sco_label'] : conf_label_samples,
+                              nodes['is_training'] : 1.0,
+                              nodes['act'] : 0.0,
+                              nodes['learning_rate'] : lr})
     
+def train_full_model(sess, nodes, img, examples, pos_action_labels, 
+                     iteration, params, lr):
+    num_data = examples.shape[0]
+    num_neg  = num_data-pos_action_labels.shape[0]
+    num_pos  = num_data-num_neg
+    pos_data = examples[:num_pos]
+    score_lable = np.array([[0,1]]*num_pos+[[1,0]]*num_neg)
+    
+    act_losses = 0
+    sco_losses = 0      
+    
+    num_batches = num_pos//(2*params['batch_size'])
+    batch_shuffled = np.random.choice(num_pos,num_pos)
+    for i in range(num_batches):
+        batch_start =  i*(2*params['batch_size'])
+        batch_end = min(num_pos, (i+1)*(2*params['batch_size']))
+        p_s = batch_shuffled[batch_start:batch_end]
+        
+        pos_samples = pos_data[p_s]
+        action_label_samples = pos_action_labels[p_s]
+        _, act_loss = sess.run([nodes['act_train_op'], nodes['act_loss']],
+                               feed_dict = {nodes['image'] : [img], nodes['cropped'] : 1.0,
+                                            nodes['boxes'] : refine_box(pos_samples, params),
+                                            nodes['boxes_ind'] : np.array([0]*pos_samples.shape[0]),
+                                            nodes['act_label'] : action_label_samples,
+                                            nodes['sco_label'] : np.zeros([len(p_s), 2]),
+                                            nodes['is_training'  ] : 1.0,
+                                            nodes['act'  ] : 1.0,
+                                            nodes['learning_rate'] : lr})
+        act_losses += act_loss
+    
+    num_batches = num_data//(2*params['batch_size'])
+    batch_shuffled = np.random.choice(num_data,num_data)
+    for i in range(num_batches):
+        batch_start =  i*(2*params['batch_size'])
+        batch_end = min(num_data, (i+1)*(2*params['batch_size']))
+        n_s = batch_shuffled[batch_start:batch_end]
+        
+        neg_samples = examples[n_s]
+        score_label_samples = score_lable[n_s]
+        _,sco_loss = sess.run([nodes['act_train_op'],nodes['sco_loss']],
+                              feed_dict = {nodes['image'] : [img], nodes['cropped'] : 1.0,
+                                           nodes['boxes'] : refine_box(neg_samples, params),
+                                           nodes['boxes_ind'] : np.array([0]*neg_samples.shape[0]),
+                                           nodes['act_label'] : np.zeros([len(n_s), 11]),
+                                           nodes['sco_label'] : score_label_samples,                              
+                                           nodes['is_training'  ] : 1.0,
+                                           nodes['act'  ] : 0.0,
+                                           nodes['learning_rate'] : lr})
+        sco_losses += sco_loss
+        
+    return act_losses, sco_losses
     
 def do_action(curr_bbox, act, params):
     bbox = np.copy(curr_bbox)
@@ -300,12 +392,11 @@ def do_action(curr_bbox, act, params):
     bbox_next[0] = min(max(bbox_next[0],0), params['width'] - bbox_next[2])
     bbox_next[1] = min(max(bbox_next[1],0), params['height'] - bbox_next[3])
     
-    bbox_next[2] = max(5, min(params['width'], bbox_next[2]))
-    bbox_next[3] = max(5, min(params['height'], bbox_next[3]))
+    bbox_next[2] = max(10, min(params['width'], bbox_next[2]))
+    bbox_next[3] = max(10, min(params['height'], bbox_next[3]))
     
     return bbox_next
 
-    
 def location_precision(esti, gt):
     esti = esti[:, [1,0]] + esti[:, (3,2)] / 2
     gt = gt[:, [1,0]] + gt[:, (3,2)] / 2
@@ -322,9 +413,7 @@ def location_precision(esti, gt):
     for p in range(max_threshold):
         precisions[p] = len(np.where((distances+1) <= p)[0])/distances.shape[0]
         
-        
     return precisions
-
 
 def overlap_precision(esti, gt):
     max_threshold = 100
@@ -349,11 +438,3 @@ def overlap_precision(esti, gt):
         
         
         
-        
-        
-        
-        
-        
-        
-        
-    
