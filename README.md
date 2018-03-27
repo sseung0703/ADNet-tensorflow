@@ -8,14 +8,19 @@
 
 ## Implements performance
 -Environments : Intel® Core™ i7-7700 CPU @ 3.60GHz × 8, GeForce GTX 1070
--Prec. (20px) : (Paper : 85.1)
--IOU(AUC)     : (Paper : 0.635)
--FPS          : (Paper : 15FPS)
+
+-Prec. (20px) : (Paper :  85.1) (this code :  79.4)
+
+-IOU(AUC)     : (Paper : 0.635) (this code : 0.601)
+
+-FPS          : (Paper : 15FPS) (this code : 18FPS)
 
 ## requirement
-Tensorflow 1.2>
-Scipy
-OpenCV
+-Tensorflow
+
+-Scipy
+
+-OpenCV
 
 ## Run
 ```
