@@ -10,10 +10,10 @@ def get_params():
     params['iter_on'] = 10
     params['iterval'] = 30
     params['init_learning_rate'] = 3e-4
-    params['on_learning_rate'] =1e-4
+    params['on_learning_rate'  ] = 1e-4
     params['batch_size'] = 64
     params['data_per_label'] = [6]*8+[4]+[6]*2
-    params['redet_samples'] = 64
+    params['redet_samples' ] = 64
     
     params['pos_init'] = 200
     params['neg_init'] = 150
@@ -139,22 +139,26 @@ def model_conv(image, path):
                         weights_regularizer=slim.l2_regularizer(5e-4)):
         
         with tf.variable_scope('Adnet'):
-            std0 = slim.conv2d(image, 96, [9, 9], 4, padding = 'VALID', activation_fn=tf.nn.relu,
+            conv = slim.conv2d(image, 96, [7, 7], 2, padding = 'VALID', activation_fn=tf.nn.relu,
                                weights_initializer = tf.constant_initializer(vggm['conv1w']),
                                biases_initializer  = tf.constant_initializer(vggm['conv1b']),
                                scope='conv0', trainable=True)
-            std0 = tf.nn.lrn(std0,2,2,1e-4,0.75)
-            std1 = slim.conv2d(std0, 256, [7, 7], 3, padding = 'VALID', activation_fn=tf.nn.relu,
+            conv = tf.nn.lrn(conv,2,2,1e-4,0.75)
+            conv = slim.max_pool2d(conv, [3, 3], 2, scope='pool0')
+            
+            conv = slim.conv2d(conv, 256, [5, 5], 2, padding = 'VALID', activation_fn=tf.nn.relu,
                                weights_initializer = tf.constant_initializer(vggm['conv2w']),
                                biases_initializer  = tf.constant_initializer(vggm['conv2b']),
                                scope='conv1', trainable=True)
-            std1 = tf.nn.lrn(std1,2,2,1e-4,0.75)
-            std2 = slim.conv2d(std1, 512, [5, 5], 1, padding = 'VALID', activation_fn=tf.nn.relu,
+            conv = tf.nn.lrn(conv,2,2,1e-4,0.75)
+            conv = slim.max_pool2d(conv, [3, 3], 2, scope='pool1')
+            
+            conv = slim.conv2d(conv, 512, [3, 3], 1, padding = 'VALID', activation_fn=tf.nn.relu,
                                weights_initializer = tf.constant_initializer(vggm['conv3w']),
                                biases_initializer  = tf.constant_initializer(vggm['conv3b']),
                                scope='conv2', trainable=True)
                 
-    return std2
+    return conv
 
 def model_fc(conv, action_hist, is_training, path):
     with slim.arg_scope([slim.conv2d, slim.fully_connected],
@@ -163,8 +167,6 @@ def model_fc(conv, action_hist, is_training, path):
         with tf.variable_scope('Adnet'):
             fc = slim.conv2d(conv, 512, [3,3], padding='VALID', activation_fn=tf.nn.relu,
                              trainable=True, scope = 'full0')
-            fc = tf.cond(is_training, lambda : slim.dropout(fc, 0.5),
-                                      lambda : fc)
             fc = slim.conv2d(fc, 512, [1,1], padding='VALID', activation_fn=None,
                              trainable=True, scope = 'full1')
             def add_hist(fc, action_hist):
@@ -178,11 +180,8 @@ def model_fc(conv, action_hist, is_training, path):
             def no_add_hist(fc):
                 #do nothing
                 return tf.nn.relu(fc)
-            
             fc = tf.cond(is_training, lambda : no_add_hist(fc),
                                       lambda : add_hist(fc, action_hist))
-            fc = tf.cond(is_training, lambda : slim.dropout(fc, 0.5),
-                                      lambda : fc)
             fc2 = slim.flatten(fc)
             act = slim.fully_connected(fc2, 11, activation_fn=None, 
                                        trainable=True, scope = 'full_act')
@@ -321,59 +320,6 @@ def train_fc(sess, nodes, feat_conv, pos_action_labels,
                               nodes['is_training'] : 1.0,
                               nodes['act'] : 0.0,
                               nodes['learning_rate'] : lr})
-    
-def train_full_model(sess, nodes, img, examples, pos_action_labels, 
-                     iteration, params, lr):
-    num_data = examples.shape[0]
-    num_neg  = num_data-pos_action_labels.shape[0]
-    num_pos  = num_data-num_neg
-    pos_data = examples[:num_pos]
-    score_lable = np.array([[0,1]]*num_pos+[[1,0]]*num_neg)
-    
-    act_losses = 0
-    sco_losses = 0      
-    
-    num_batches = num_pos//(2*params['batch_size'])
-    batch_shuffled = np.random.choice(num_pos,num_pos)
-    for i in range(num_batches):
-        batch_start =  i*(2*params['batch_size'])
-        batch_end = min(num_pos, (i+1)*(2*params['batch_size']))
-        p_s = batch_shuffled[batch_start:batch_end]
-        
-        pos_samples = pos_data[p_s]
-        action_label_samples = pos_action_labels[p_s]
-        _, act_loss = sess.run([nodes['act_train_op'], nodes['act_loss']],
-                               feed_dict = {nodes['image'] : [img], nodes['cropped'] : 1.0,
-                                            nodes['boxes'] : refine_box(pos_samples, params),
-                                            nodes['boxes_ind'] : np.array([0]*pos_samples.shape[0]),
-                                            nodes['act_label'] : action_label_samples,
-                                            nodes['sco_label'] : np.zeros([len(p_s), 2]),
-                                            nodes['is_training'  ] : 1.0,
-                                            nodes['act'  ] : 1.0,
-                                            nodes['learning_rate'] : lr})
-        act_losses += act_loss
-    
-    num_batches = num_data//(2*params['batch_size'])
-    batch_shuffled = np.random.choice(num_data,num_data)
-    for i in range(num_batches):
-        batch_start =  i*(2*params['batch_size'])
-        batch_end = min(num_data, (i+1)*(2*params['batch_size']))
-        n_s = batch_shuffled[batch_start:batch_end]
-        
-        neg_samples = examples[n_s]
-        score_label_samples = score_lable[n_s]
-        _,sco_loss = sess.run([nodes['act_train_op'],nodes['sco_loss']],
-                              feed_dict = {nodes['image'] : [img], nodes['cropped'] : 1.0,
-                                           nodes['boxes'] : refine_box(neg_samples, params),
-                                           nodes['boxes_ind'] : np.array([0]*neg_samples.shape[0]),
-                                           nodes['act_label'] : np.zeros([len(n_s), 11]),
-                                           nodes['sco_label'] : score_label_samples,                              
-                                           nodes['is_training'  ] : 1.0,
-                                           nodes['act'  ] : 0.0,
-                                           nodes['learning_rate'] : lr})
-        sco_losses += sco_loss
-        
-    return act_losses, sco_losses
     
 def do_action(curr_bbox, act, params):
     bbox = np.copy(curr_bbox)

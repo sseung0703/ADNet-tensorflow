@@ -8,9 +8,15 @@ import scipy.io as sio
 import cv2, glob, os, re
 import tracker_util as tutil
 
+
 params = tutil.get_params()
+
+data_home = 'OTB100'
+dataset = glob.glob(os.path.join('%s'%data_home,'*'))
+dataset.sort()
+dataset = dataset[:100]
+
 param_path = 'ADNet_params.mat'
-dataset = ['OTB100/Boy']
 results = {}
 results['fps'] = []
 results['location'] = []
@@ -67,7 +73,6 @@ with tf.Graph().as_default():
     def assign(variables, fc_tensor):
         for i in range(6,14):
             variables[i].assign(fc_tensor[i-6])
-            
         return variables
     
     assign_fc = tf.placeholder_with_default(0.0, [])
@@ -76,7 +81,6 @@ with tf.Graph().as_default():
     fc_variables = []
     for i in range(6,14):
         fc_variables.append(variables[i].assign(v_[i-6]))
-    
     
     nodes['act'] = tf.placeholder(tf.float32)
     losses = tf.cond(tf.equal(nodes['act'],1.0), lambda :   nodes['act_loss']+0*nodes['sco_loss'],
@@ -89,7 +93,6 @@ with tf.Graph().as_default():
             gradients[i] = (gradients[i][0]*10,gradients[i][1])
         else:
             gradients[i] = (gradients[i][0]*20,gradients[i][1])
-            
     gradients[4] = (gradients[4][0]*2, gradients[4][1])
     gradients[5] = (gradients[5][0]*2, gradients[5][1])
         
@@ -358,8 +361,8 @@ with tf.Graph().as_default():
                             _ = sess.run(variables, feed_dict = {reset : 1.0})
 #                                check = 0
                             iteration = params['iter_on']
-                            if is_negative:
-                                iteration = params['iter_on']//2
+#                            if is_negative:
+#                                iteration = params['iter_on']//2
                             tutil.train_fc(sess, nodes, feat_conv, pos_action_labels,
                                            iteration, params, params['on_learning_rate'])
                             check += 1
@@ -374,7 +377,7 @@ with tf.Graph().as_default():
                     frame = cv2.rectangle(frame,(int(curr_bbox[0]),int(curr_bbox[1])),
                                                 (int(curr_bbox[0]+curr_bbox[2]),int(curr_bbox[1]+curr_bbox[3])),[255,0,0],2)
                     
-#                    cv2.imwrite('results/'+frames[f][-8:],frame)
+                    cv2.imwrite('results/'+frames[f][-8:],frame)
                     cv2.imshow('f',frame)
                     key = cv2.waitKey(1) & 0xff
                     if key == ord('s'):
