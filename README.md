@@ -28,7 +28,7 @@ $ python tracker.py
 ``` 
 
 ## Example
- (https://github.com/sseung0703/ADNet-tensorflow/blob/master/results.gif)
+ ![Basketball](/results.gif)
 
 ## References
 - Action-Decision Networks for Visual Tracking with Deep Reinforcement Learning (CVPR2017) : http://openaccess.thecvf.com/content_cvpr_2017/papers/Yun_Action-Decision_Networks_for_CVPR_2017_paper.pdf
